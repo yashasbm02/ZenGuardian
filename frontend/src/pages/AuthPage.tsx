@@ -83,7 +83,7 @@ export function AuthPage() {
             </div>
           </label>
 
-          {error && <p className="form-error">{error}</p>}
+          {error && <p className="form-error" aria-live="assertive">{error}</p>}
 
           <button type="submit" className="primary" disabled={busy}>
             {busy ? 'Please wait…' : mode === 'login' ? 'Sign in' : 'Create account'}

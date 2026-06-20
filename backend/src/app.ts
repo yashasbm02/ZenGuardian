@@ -2,6 +2,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import express, { type Application } from 'express';
 import helmet from 'helmet';
+import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import { authRouter } from './routes/auth.routes';
 import { journalRouter } from './routes/journal.routes';
@@ -15,6 +16,7 @@ export function createApp(): Application {
 
   app.set('trust proxy', 1); // Cloud Run / proxies — needed for secure cookies + rate-limit.
   app.use(helmet());
+  app.use(cors({ origin: process.env.NODE_ENV === 'production' ? 'https://zenguardian.app' : 'http://localhost:5173', credentials: true }));
   app.use(express.json({ limit: '1mb' }));
   app.use(cookieParser());
 

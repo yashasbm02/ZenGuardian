@@ -1,0 +1,31 @@
+services:
+  - type: web
+    name: zenguardian
+    env: docker
+    region: singapore
+    plan: free
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: MONGODB_URI
+        value: mongodb+srv://yashas:12345@cluster0.ghbhs59.mongodb.net/zenguardian?appName=Cluster0
+      - key: JWT_SECRET
+        value: 44b13748257f1680ff227a6925bccbbcb2563e4ffe5a28118a70b0db00615229
+      - key: JWT_EXPIRES_IN
+        value: 7d
+      - key: NVIDIA_API_KEY
+        value: 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
+      - key: NVIDIA_BASE_URL
+        value: https://integrate.api.nvidia.com/v1
+      - key: NVIDIA_CHAT_MODEL
+        value: moonshotai/kimi-k2.6
+      - key: GEMINI_API_KEY
+        value: AIzaSyBsQSGkZGW9kQ_Yd7j-mqyzy_ZTf_nTY38
+      - key: GEMINI_EMBEDDING_MODEL
+        value: gemini-embedding-001
+      - key: EMBEDDING_DIMENSIONS
+        value: 768
+      - key: VECTOR_INDEX_NAME
+        value: vector_index
+      - key: ADMIN_KEY
+        value: d694855cd4d117c9621ebab8e65f6f7a

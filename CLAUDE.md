@@ -12,7 +12,8 @@ known gotchas, and patterns to follow when adding features or debugging.
 | Backend | Express 4, TypeScript → CommonJS (`tsc`), Node 20 |
 | Frontend | React 18, Vite 5, TypeScript (ESM), plain CSS |
 | Database | MongoDB Atlas (Vector Search requires Atlas, not local `mongod`) |
-| AI | `@google/genai` — `text-embedding-004` + `gemini-2.5-flash` |
+| AI (chat) | **NVIDIA** OpenAI-compatible API running Kimi (`moonshotai/kimi-k2.6`) via the `openai` SDK |
+| AI (embeddings) | **Gemini** `gemini-embedding-001` via `@google/genai` (separate quota; keeps the 768-dim index valid) |
 | Auth | JWT in HTTP-only cookie (`auth_token`), no `localStorage` |
 | Deploy | Single Cloud Run container — Express serves `/api` + static `frontend/dist` |
 
@@ -63,8 +64,10 @@ frontend/src/
 - Auth routes are rate-limited (20 req / 15 min window). Don't remove the limiter.
 
 ### Embeddings / Vector Search
-- Embedding model is `text-embedding-004` (native 768-dim). The blueprint's
-  `gemini-embedding-2` does **not exist** — if you ever see that string, it will 404.
+- Embedding model is `gemini-embedding-001` (GA). `text-embedding-004` is no
+  longer served on the Gemini Developer API and returns 404. gemini-embedding-001
+  defaults to 3072-dim; we request 768 via `outputDimensionality` and L2-normalize
+  (it only pre-normalizes at the full 3072 width).
 - The Atlas index **must** include a `filter` field for `userId`:
   ```json
   { "type": "filter", "path": "userId" }
@@ -137,11 +140,13 @@ means adding it there (Zod schema) **and** to `backend/.env.example`.
 | `MONGODB_URI` | ✓ | — | Atlas URI; local `mongod` won't have Vector Search |
 | `JWT_SECRET` | ✓ | — | Min 32 chars; generate with `openssl rand -hex 32` |
 | `JWT_EXPIRES_IN` | — | `7d` | Any `jsonwebtoken` duration string |
-| `GEMINI_API_KEY` | ✓ | — | Google AI Studio key |
-| `GEMINI_CHAT_MODEL` | — | `gemini-2.5-flash` | Any valid Gemini chat model |
-| `GEMINI_EMBEDDING_MODEL` | — | `text-embedding-004` | Must produce 768-dim vectors or change `EMBEDDING_DIMENSIONS` and the Atlas index |
+| `NVIDIA_API_KEY` | ✓ | — | `nvapi-...` inference key from build.nvidia.com (chat/generation) |
+| `NVIDIA_BASE_URL` | — | `https://integrate.api.nvidia.com/v1` | OpenAI-compatible base URL |
+| `NVIDIA_CHAT_MODEL` | — | `moonshotai/kimi-k2.6` | Kimi model id (k2-instruct is EOL) |
+| `GEMINI_API_KEY` | ✓ | — | Google AI Studio key — **embeddings only** now |
+| `GEMINI_EMBEDDING_MODEL` | — | `gemini-embedding-001` | Must produce 768-dim vectors or change `EMBEDDING_DIMENSIONS` and the Atlas index |
 | `EMBEDDING_DIMENSIONS` | — | `768` | Must match Atlas index `numDimensions` |
-| `VECTOR_INDEX_NAME` | — | `journal_vector_index` | Must match the Atlas Search index name |
+| `VECTOR_INDEX_NAME` | — | `vector_index` | Must match the Atlas Search index name |
 | `PORT` | — | `8080` | Injected by Cloud Run automatically |
 | `NODE_ENV` | — | `development` | `production` enables `secure` cookie flag |
 
@@ -170,19 +175,24 @@ means adding it there (Zod schema) **and** to `backend/.env.example`.
 
 ---
 
-## Gemini service patterns
+## AI service patterns
 
-`backend/src/services/gemini.service.ts` exports a singleton `geminiService`.
+Chat/generation lives in `backend/src/services/llm.service.ts` (singleton `llm`,
+NVIDIA OpenAI-compatible client). Embeddings live in
+`backend/src/services/embedding.service.ts` (singleton `embeddings`, Gemini).
 
-- **New structured extraction:** add a schema (using `Type.*` from `@google/genai`)
-  and a new method that calls `this.ai.models.generateContent` with
-  `responseMimeType: 'application/json'` and `responseSchema`. Parse
-  `response.text` with `JSON.parse`.
-- **New streaming endpoint:** return
-  `this.ai.models.generateContentStream(...)` from the service method and
-  `for await` the chunks in the controller, writing `sse(res, 'token', chunk.text)`.
-- **New embedding use case:** call `geminiService.embed(text)` — it handles the
-  `outputDimensionality` parameter and re-normalization.
+- **New structured extraction:** add a method on `llm` that calls
+  `completeJson(system, user, temp)` with `response_format: { type: 'json_object' }`;
+  describe the exact JSON keys in the system prompt and parse with the tolerant
+  `parseJsonObject<T>()` helper. Always coerce/clamp the result (arrays, enums)
+  since `json_object` mode isn't strict-schema.
+- **New streaming endpoint:** add a method returning `this.streamChatCompletion(messages, temp)`
+  (an `AsyncGenerator<string>`); in the controller `for await (const token of …) sse(res,'token',token)`.
+- **New embedding use case:** call `embeddings.embed(text)`. In request paths wrap
+  it best-effort (see `embedSafe` in `journal.controller.ts`) so a throttled
+  Gemini key never breaks the request.
+- **Language:** Kimi drifts to Chinese without steering — every system prompt
+  includes "respond in English". Keep that in any new prompt.
 
 ---
 

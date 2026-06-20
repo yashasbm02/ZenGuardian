@@ -1,10 +1,11 @@
 import type { Response, NextFunction } from 'express';
 import { Types } from 'mongoose';
 import { z } from 'zod';
-import { env } from '../config/env';
 import { JournalModel } from '../models/journal.model';
-import { geminiService, type SimilarEntry } from '../services/gemini.service';
-import { journalEntrySchema } from '../utils/validation';
+import { llm } from '../services/llm.service';
+import { embeddings } from '../services/embedding.service';
+import { retrieveSimilarEntries } from '../services/retrieval.service';
+import { journalEntrySchema, exploreSchema } from '../utils/validation';
 import { detectsCrisis, CRISIS_RESOURCE_MESSAGE } from '../utils/safety';
 import { HttpError } from '../middleware/error.middleware';
 import { eventLog } from '../services/eventLog.service';
@@ -15,49 +16,12 @@ function sse(res: Response, type: string, data: unknown): void {
   res.write(`data: ${JSON.stringify({ type, data })}\n\n`);
 }
 
-/**
- * Retrieve the user's own semantically similar prior entries.
- *
- * Fix vs. blueprint: `userId` is applied via the `filter` field INSIDE
- * `$vectorSearch` (not a post-hoc `$match`), and `numCandidates` is wide enough
- * to actually find them. Degrades gracefully to `[]` if the Atlas Vector Search
- * index is missing, so the app still works on a fresh cluster.
- */
-async function findSimilarEntries(
-  userId: string,
-  embedding: number[],
-): Promise<SimilarEntry[]> {
+/** Best-effort embedding — never blocks an entry if the provider is down. */
+async function embedSafe(userId: string, text: string): Promise<number[]> {
   try {
-    return await JournalModel.aggregate<SimilarEntry>([
-      {
-        $vectorSearch: {
-          index: env.VECTOR_INDEX_NAME,
-          path: 'embedding',
-          queryVector: embedding,
-          numCandidates: 150,
-          limit: 4,
-          filter: { userId: new Types.ObjectId(userId) },
-        },
-      },
-      // Exclude redacted entries from RAG context.
-      { $match: { redacted: { $ne: true } } },
-      {
-        $project: {
-          _id: 0,
-          content: 1,
-          primaryEmotion: '$moodMetrics.primaryEmotion',
-          stressScore: '$moodMetrics.stressScore',
-          createdAt: 1,
-        },
-      },
-    ]);
+    return await embeddings.embed(text);
   } catch (err) {
-    // eslint-disable-next-line no-console
-    console.warn(
-      'Vector search unavailable (is the Atlas index created?). Continuing without history.',
-      err instanceof Error ? err.message : err,
-    );
-    eventLog.log('vector.degraded', userId, {
+    eventLog.log('embed.failed', userId, {
       error: err instanceof Error ? err.message : String(err),
     });
     return [];
@@ -78,21 +42,23 @@ export async function createEntry(
     const { content } = journalEntrySchema.parse(req.body);
     const userId = req.userId!;
 
-    // 1) Embed, then retrieve history BEFORE inserting so the new entry can't
-    //    match itself.
+    // 1) Embed (best-effort), then retrieve history BEFORE inserting so the new
+    //    entry can't match itself.
     const embedStart = Date.now();
-    const embedding = await geminiService.embed(content);
-    eventLog.log('gemini.embed', userId, { latencyMs: Date.now() - embedStart });
-    const history = await findSimilarEntries(userId, embedding);
+    const embedding = await embedSafe(userId, content);
+    eventLog.log('embed.done', userId, { latencyMs: Date.now() - embedStart, ok: embedding.length > 0 });
+    const history = await retrieveSimilarEntries(userId, embedding);
 
-    // 2) Structured analysis.
-    const analysis = await geminiService.analyze(content);
+    // 2) Structured analysis. `suggestions` are ephemeral UI chips — split them
+    //    out so only the mood metrics get persisted.
+    const analysis = await llm.analyze(content);
+    const { suggestions = [], ...moodMetrics } = analysis;
 
     // 3) Persist.
     const entry = await JournalModel.create({
       userId: new Types.ObjectId(userId),
       content,
-      moodMetrics: analysis,
+      moodMetrics,
       embedding,
     });
 
@@ -105,14 +71,14 @@ export async function createEntry(
 
     sse(res, 'analysis', {
       id: entry.id,
-      moodMetrics: analysis,
+      moodMetrics,
+      suggestions,
       createdAt: entry.createdAt,
     });
 
     // 5) Stream the empathetic companion reply token-by-token.
-    const stream = await geminiService.streamCompanionReply(content, history);
-    for await (const chunk of stream) {
-      if (chunk.text) sse(res, 'token', chunk.text);
+    for await (const token of llm.streamCompanionReply(content, history)) {
+      if (token) sse(res, 'token', token);
     }
 
     // 6) Safety net — surface helpline resources on crisis signals.
@@ -125,11 +91,60 @@ export async function createEntry(
     sse(res, 'done', null);
     res.end();
   } catch (err) {
-    eventLog.log('gemini.error', req.userId, {
+    eventLog.log('llm.error', req.userId, {
       error: err instanceof Error ? err.message : String(err),
     });
     if (streaming) {
       sse(res, 'error', 'Something went wrong while generating support.');
+      res.end();
+      return;
+    }
+    next(err);
+  }
+}
+
+/**
+ * POST /api/journal/explore — answer a tapped follow-up suggestion.
+ * Streams a reply (SSE: token* → [crisis] → suggestions → done) but does NOT
+ * embed, mood-analyze, or persist anything. Keeps mood-tracking data clean.
+ */
+export async function exploreEntry(
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  let streaming = false;
+  try {
+    const { question, context } = exploreSchema.parse(req.body);
+    eventLog.log('explore.asked', req.userId);
+
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders?.();
+    streaming = true;
+
+    for await (const token of llm.streamExplore(question, context)) {
+      if (token) sse(res, 'token', token);
+    }
+
+    if (detectsCrisis(question)) {
+      sse(res, 'crisis', CRISIS_RESOURCE_MESSAGE);
+    }
+
+    // Fresh chips so the student can keep drilling down.
+    const suggestions = await llm.generateSuggestions(question);
+    sse(res, 'suggestions', suggestions);
+
+    sse(res, 'done', null);
+    res.end();
+  } catch (err) {
+    eventLog.log('llm.error', req.userId, {
+      where: 'explore',
+      error: err instanceof Error ? err.message : String(err),
+    });
+    if (streaming) {
+      sse(res, 'error', 'Something went wrong while exploring that.');
       res.end();
       return;
     }

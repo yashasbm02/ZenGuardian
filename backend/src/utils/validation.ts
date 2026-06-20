@@ -21,5 +21,18 @@ export const journalEntrySchema = z.object({
     .max(8000, 'Entry is too long.'),
 });
 
+/** A tapped follow-up question + the original entry it relates to (for context). */
+export const exploreSchema = z.object({
+  question: z.string().trim().min(2, 'Question is too short.').max(300, 'Question is too long.'),
+  context: z.string().trim().max(8000).optional(),
+});
+
+/** A single message sent to the companion chatbot. */
+export const chatMessageSchema = z.object({
+  message: z.string().trim().min(1, 'Say something to your companion.').max(4000, 'Message is too long.'),
+});
+
 export type Credentials = z.infer<typeof credentialsSchema>;
 export type JournalEntryInput = z.infer<typeof journalEntrySchema>;
+export type ExploreInput = z.infer<typeof exploreSchema>;
+export type ChatMessageInput = z.infer<typeof chatMessageSchema>;

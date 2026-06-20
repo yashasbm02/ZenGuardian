@@ -21,7 +21,15 @@ export interface JournalEntry {
 export interface AnalysisEvent {
   id: string;
   moodMetrics: MoodMetrics;
+  suggestions?: string[];
   createdAt: string;
+}
+
+export interface ChatMessage {
+  _id?: string;
+  role: 'user' | 'assistant';
+  content: string;
+  createdAt?: string;
 }
 
 export interface InsightReport {
@@ -42,5 +50,6 @@ export type StreamEvent =
   | { type: 'analysis'; data: AnalysisEvent }
   | { type: 'token'; data: string }
   | { type: 'crisis'; data: string }
+  | { type: 'suggestions'; data: string[] }
   | { type: 'done'; data: null }
   | { type: 'error'; data: string };

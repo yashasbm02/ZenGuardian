@@ -18,13 +18,14 @@ companion reply.
 │  Cloud Run container (port 8080)                             │
 │                                                              │
 │   React/Vite bundle  ──served by──►  Express                 │
-│                                        ├─ /api/auth   (JWT in HTTP-only cookie)
-│                                        └─ /api/journal (SSE stream)
+│                                  ├─ /api/auth    (JWT in HTTP-only cookie)
+│                                  ├─ /api/journal (analyze + RAG, SSE)
+│                                  └─ /api/chat    (companion chatbot, SSE)
 │                                              │               │
 │                         ┌────────────────────┼─────────────┐ │
 │                         ▼                    ▼             ▼ │
-│                  Gemini embed         Gemini analyze   Gemini stream
-│                  (text-embedding-004) (gemini-2.5-flash JSON)  (gemini-2.5-flash)
+│                  Gemini embed          NVIDIA Kimi    NVIDIA Kimi
+│                 (gemini-embedding-001) (analyze JSON) (chat stream)
 │                         │                                     │
 │                         ▼                                     │
 │              MongoDB Atlas Vector Search (per-user RAG memory)│
@@ -32,7 +33,12 @@ companion reply.
 ```
 
 **Stack:** React 18 + Vite (TS) · Express + Mongoose (TS) · MongoDB Atlas Vector
-Search · `@google/genai` (Gemini) · JWT auth in HTTP-only cookies · Docker.
+Search · **NVIDIA Kimi** (`openai` SDK) for chat + **Gemini** (`@google/genai`)
+for embeddings · JWT auth in HTTP-only cookies · Docker.
+
+**AI providers:** chat/generation runs on NVIDIA's OpenAI-compatible API
+(`moonshotai/kimi-k2.6`); embeddings stay on Gemini (`gemini-embedding-001`,
+768-dim) on a separate quota so the Atlas vector index needs no re-indexing.
 
 ---
 
@@ -40,7 +46,8 @@ Search · `@google/genai` (Gemini) · JWT auth in HTTP-only cookies · Docker.
 
 - Node.js 20+
 - A **MongoDB Atlas** cluster (Vector Search needs Atlas — local `mongod` won't work)
-- A **Google AI Studio** API key for Gemini
+- An **NVIDIA** `nvapi-...` inference key from [build.nvidia.com](https://build.nvidia.com) (chat)
+- A **Google AI Studio** API key for Gemini (embeddings only)
 
 ---
 
@@ -72,8 +79,9 @@ openssl rand -hex 32
 
 ## MongoDB Atlas Vector Search index
 
-Create a **Vector Search** index named **`journal_vector_index`** (must match
-`VECTOR_INDEX_NAME`) on the **`journals`** collection:
+Create a **Vector Search** index on the **`journals`** collection. The index name
+must match `VECTOR_INDEX_NAME` in your `.env` (Atlas suggests **`vector_index`** by
+default; set whichever you choose in both places):
 
 ```json
 {
@@ -89,10 +97,10 @@ Create a **Vector Search** index named **`journal_vector_index`** (must match
 > results). If the index is missing, the app still runs — it just skips RAG
 > history until you create it.
 
-`numDimensions` must equal `EMBEDDING_DIMENSIONS`. If you switch
-`GEMINI_EMBEDDING_MODEL` to `gemini-embedding-001`, keep
-`EMBEDDING_DIMENSIONS=768` (the service passes `outputDimensionality` and
-re-normalizes) or change both the env var and the index to match.
+`numDimensions` must equal `EMBEDDING_DIMENSIONS`. The default
+`gemini-embedding-001` natively returns 3072-dim vectors; the service requests
+768 via `outputDimensionality` and L2-normalizes, so keep both `EMBEDDING_DIMENSIONS`
+and the index's `numDimensions` at 768 (or change all three to match).
 
 ---
 
@@ -112,7 +120,7 @@ gcloud run deploy zenguardian \
   --source . \
   --region asia-south1 \
   --allow-unauthenticated \
-  --set-env-vars "MONGODB_URI=...,JWT_SECRET=...,GEMINI_API_KEY=..."
+  --set-env-vars "MONGODB_URI=...,JWT_SECRET=...,NVIDIA_API_KEY=...,GEMINI_API_KEY=..."
 ```
 
 Cloud Run injects `PORT`; the server reads it (defaults to 8080).
@@ -130,9 +138,15 @@ Cloud Run injects `PORT`; the server reads it (defaults to 8080).
 | GET    | `/api/auth/me`      | ✓    | Current user                                  |
 | POST   | `/api/journal`      | ✓    | Analyze + persist entry; **SSE** stream reply |
 | GET    | `/api/journal`      | ✓    | Recent entries (for history + trend)          |
+| POST   | `/api/journal/explore` | ✓ | Non-persisted follow-up answer; **SSE**       |
+| GET    | `/api/journal/insights` | ✓ | Longitudinal pattern report (cached)         |
+| GET    | `/api/chat`         | ✓    | Companion conversation history                |
+| POST   | `/api/chat`         | ✓    | Send a message; **SSE** streamed reply (persisted) |
+| DELETE | `/api/chat`         | ✓    | Clear the conversation                        |
 
 `POST /api/journal` streams Server-Sent Events:
 `analysis` → `token`… → optional `crisis` → `done` (or `error`).
+`POST /api/chat` streams `token`… → optional `crisis` → `done`.
 
 ---
 
@@ -140,9 +154,10 @@ Cloud Run injects `PORT`; the server reads it (defaults to 8080).
 
 The blueprint's architecture was kept; these runtime/security bugs were fixed:
 
-1. **Embedding model** — `gemini-embedding-2` doesn't exist (would 404). Now
-   `text-embedding-004` (768-dim), model + dimension configurable, vectors
-   re-normalized for non-3072 widths.
+1. **Embedding model** — the blueprint's `gemini-embedding-2` and the initial
+   `text-embedding-004` both 404 on the current Gemini Developer API. Now
+   `gemini-embedding-001` (the GA model) at 768-dim, model + dimension
+   configurable, vectors re-normalized for non-3072 widths.
 2. **Per-user vector search** — `$vectorSearch` returns *global* neighbors, so a
    trailing `$match` on `userId` returned ~nothing. Filtering now happens inside
    `$vectorSearch`, with `userId` added to the index as a `filter` field. We also

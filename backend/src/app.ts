@@ -5,6 +5,7 @@ import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
 import { authRouter } from './routes/auth.routes';
 import { journalRouter } from './routes/journal.routes';
+import { chatRouter } from './routes/chat.routes';
 import { userRouter } from './routes/user.routes';
 import { adminRouter } from './routes/admin.routes';
 import { notFound, errorHandler } from './middleware/error.middleware';
@@ -23,6 +24,7 @@ export function createApp(): Application {
   });
   app.use('/api/auth', authRouter);
   app.use('/api/journal', journalRouter);
+  app.use('/api/chat', chatRouter);
   app.use('/api/user', userRouter);
   app.use('/api/admin', adminRouter);
 

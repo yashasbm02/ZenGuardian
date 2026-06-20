@@ -33,8 +33,9 @@ const journalSchema = new Schema<IJournal>(
       copingStrategy: { type: String, required: true },
     },
     // 768-dim vector. `select: false` so list/history queries never haul the
-    // raw embedding back to the client by default.
-    embedding: { type: [Number], required: true, select: false },
+    // raw embedding back to the client by default. Not required: if the
+    // embedding provider fails, the entry still saves (RAG just skips it).
+    embedding: { type: [Number], default: [], select: false },
     redacted: { type: Boolean, default: false, index: true },
   },
   { timestamps: true },

@@ -17,12 +17,17 @@ const envSchema = z.object({
   JWT_SECRET: z.string().min(32, 'JWT_SECRET must be at least 32 characters'),
   JWT_EXPIRES_IN: z.string().default('7d'),
 
+  // Chat / generation — NVIDIA (OpenAI-compatible) running Kimi.
+  NVIDIA_API_KEY: z.string().min(1, 'NVIDIA_API_KEY is required'),
+  NVIDIA_BASE_URL: z.string().default('https://integrate.api.nvidia.com/v1'),
+  NVIDIA_CHAT_MODEL: z.string().default('moonshotai/kimi-k2.6'),
+
+  // Embeddings — Gemini (separate quota; keeps the 768-dim vector index valid).
   GEMINI_API_KEY: z.string().min(1, 'GEMINI_API_KEY is required'),
-  GEMINI_CHAT_MODEL: z.string().default('gemini-2.5-flash'),
-  GEMINI_EMBEDDING_MODEL: z.string().default('text-embedding-004'),
+  GEMINI_EMBEDDING_MODEL: z.string().default('gemini-embedding-001'),
   EMBEDDING_DIMENSIONS: z.coerce.number().int().positive().default(768),
 
-  VECTOR_INDEX_NAME: z.string().default('journal_vector_index'),
+  VECTOR_INDEX_NAME: z.string().default('vector_index'),
 
   // Optional — if absent, the /api/admin/health endpoint returns 404.
   ADMIN_KEY: z.string().min(16).optional(),

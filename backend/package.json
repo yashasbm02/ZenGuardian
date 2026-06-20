@@ -11,7 +11,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@google/genai": "^0.7.0",
+    "@google/genai": "^2.9.0",
     "bcryptjs": "^2.4.3",
     "cookie-parser": "^1.4.7",
     "dotenv": "^16.4.5",
@@ -20,6 +20,7 @@
     "helmet": "^7.1.0",
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^8.6.0",
+    "openai": "^6.44.0",
     "zod": "^3.23.8"
   },
   "devDependencies": {
@@ -29,6 +30,7 @@
     "@types/jsonwebtoken": "^9.0.6",
     "@types/node": "^20.14.0",
     "tsx": "^4.16.0",
-    "typescript": "^5.5.0"
+    "typescript": "^5.5.0",
+    "vitest": "^4.1.9"
   }
 }

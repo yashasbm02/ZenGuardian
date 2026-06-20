@@ -1,11 +1,14 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { api, streamJournalEntry } from '../api/client';
+import { api, streamJournalEntry, streamExplore } from '../api/client';
 import type { JournalEntry, MoodMetrics } from '../types';
 import { AnalysisCard } from '../components/AnalysisCard';
 import { StressTrend } from '../components/StressTrend';
 import { InsightsCard } from '../components/InsightsCard';
+import { SuggestionChips } from '../components/SuggestionChips';
+import { ThemeToggle } from '../components/ThemeToggle';
+import { Modal } from '../components/Modal';
 
 export function Dashboard() {
   const { user, logout } = useAuth();
@@ -19,7 +22,12 @@ export function Dashboard() {
   const [error, setError] = useState<string | null>(null);
   const [entries, setEntries] = useState<JournalEntry[]>([]);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [exploreTopic, setExploreTopic] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState(false);
 
+  // The most recent entry text — passed as context when exploring a follow-up.
+  const lastContentRef = useRef('');
   const replyRef = useRef<HTMLDivElement>(null);
 
   const loadEntries = () =>
@@ -38,19 +46,24 @@ export function Dashboard() {
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
-    if (content.trim().length < 10 || busy) return;
+    const text = content.trim();
+    if (text.length < 10 || busy) return;
 
     setBusy(true);
     setReply('');
     setAnalysis(null);
     setCrisis(null);
     setError(null);
+    setSuggestions([]);
+    setExploreTopic(null);
+    lastContentRef.current = text;
 
     try {
-      await streamJournalEntry(content, (event) => {
+      await streamJournalEntry(text, (event) => {
         switch (event.type) {
           case 'analysis':
             setAnalysis(event.data.moodMetrics);
+            setSuggestions(event.data.suggestions ?? []);
             break;
           case 'token':
             setReply((prev) => prev + event.data);
@@ -61,6 +74,7 @@ export function Dashboard() {
           case 'error':
             setError(event.data);
             break;
+          case 'suggestions':
           case 'done':
             break;
         }
@@ -69,6 +83,44 @@ export function Dashboard() {
       await loadEntries();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not submit your entry.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /** Tap a suggestion chip → stream a non-persisted "explore" answer. */
+  const handleExplore = async (question: string) => {
+    if (busy) return;
+
+    setBusy(true);
+    setReply('');
+    setCrisis(null);
+    setError(null);
+    setSuggestions([]);
+    setExploreTopic(question);
+
+    try {
+      await streamExplore(question, lastContentRef.current || undefined, (event) => {
+        switch (event.type) {
+          case 'token':
+            setReply((prev) => prev + event.data);
+            break;
+          case 'suggestions':
+            setSuggestions(event.data);
+            break;
+          case 'crisis':
+            setCrisis(event.data);
+            break;
+          case 'error':
+            setError(event.data);
+            break;
+          case 'analysis':
+          case 'done':
+            break;
+        }
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not explore that.');
     } finally {
       setBusy(false);
     }
@@ -96,8 +148,10 @@ export function Dashboard() {
         </div>
         <div className="topbar-right">
           <span className="muted small">{user?.email}</span>
-          <button className="link" onClick={() => navigate('/settings')}>Settings</button>
-          <button className="link" onClick={() => void logout()}>Sign out</button>
+          <ThemeToggle />
+          <button className="btn-secondary" onClick={() => navigate('/chat')}>💬 Companion</button>
+          <button className="btn-ghost" onClick={() => navigate('/settings')}>Settings</button>
+          <button className="btn-ghost" onClick={() => void logout()}>Sign out</button>
         </div>
       </header>
 
@@ -139,13 +193,34 @@ export function Dashboard() {
             <div className="card companion">
               <div className="card-head">
                 <h3>ZenGuardian</h3>
-                {busy && !reply && <span className="muted small">thinking…</span>}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                  {exploreTopic ? (
+                    <span className="muted small">exploring · {exploreTopic}</span>
+                  ) : (
+                    busy && !reply && <span className="muted small">thinking…</span>
+                  )}
+                  {reply && (
+                    <button
+                      type="button"
+                      className="icon-btn expand-btn"
+                      onClick={() => setExpanded(true)}
+                      title="Enlarge"
+                      aria-label="Enlarge response"
+                    >
+                      ⤢
+                    </button>
+                  )}
+                </div>
               </div>
               <div className="reply" ref={replyRef}>
                 {reply}
                 {busy && <span className="cursor" />}
               </div>
             </div>
+          )}
+
+          {suggestions.length > 0 && (
+            <SuggestionChips suggestions={suggestions} onSelect={handleExplore} disabled={busy} />
           )}
         </section>
 
@@ -190,6 +265,33 @@ export function Dashboard() {
           </div>
         </aside>
       </main>
+
+      {expanded && (
+        <Modal onClose={() => setExpanded(false)}>
+          <div className="modal-head">
+            <h3>ZenGuardian</h3>
+            {exploreTopic && <span className="muted small">exploring · {exploreTopic}</span>}
+          </div>
+          <div className="modal-body">
+            <div className="reply reply--modal">
+              {reply}
+              {busy && <span className="cursor" />}
+            </div>
+            {suggestions.length > 0 && (
+              <div style={{ marginTop: '1.25rem' }}>
+                <SuggestionChips
+                  suggestions={suggestions}
+                  onSelect={(q) => {
+                    setExpanded(false);
+                    void handleExplore(q);
+                  }}
+                  disabled={busy}
+                />
+              </div>
+            )}
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }

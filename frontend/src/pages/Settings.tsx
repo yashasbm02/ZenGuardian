@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { api, ApiError } from '../api/client';
+import { ThemeToggle } from '../components/ThemeToggle';
 
 export function Settings() {
   const { user, logout } = useAuth();
@@ -54,7 +55,9 @@ export function Settings() {
           <strong>ZenGuardian</strong>
         </div>
         <div className="topbar-right">
-          <button className="link" onClick={() => navigate('/')}>← Dashboard</button>
+          <ThemeToggle />
+          <button className="btn-ghost" onClick={() => navigate('/')}>← Dashboard</button>
+          <button className="btn-secondary" onClick={() => void logout()}>Sign out</button>
         </div>
       </header>
 

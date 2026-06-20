@@ -1,4 +1,4 @@
-import type { InsightsResponse, JournalEntry, StreamEvent, User } from '../types';
+import type { ChatMessage, InsightsResponse, JournalEntry, StreamEvent, User } from '../types';
 
 /** Thrown for non-2xx JSON responses; carries the server's message + status. */
 export class ApiError extends Error {
@@ -55,27 +55,33 @@ export const api = {
 
   getInsights: (bust = false) =>
     request<InsightsResponse>(`/api/journal/insights${bust ? '?refresh=true' : ''}`),
+
+  getChatHistory: () => request<{ messages: ChatMessage[] }>('/api/chat'),
+
+  clearChat: () => request<void>('/api/chat', { method: 'DELETE' }),
 };
 
 /**
- * POST a journal entry and consume the Server-Sent Events stream. EventSource
- * can't issue a POST with a body, so we read the response stream by hand and
- * split it on the SSE `\n\n` frame boundary.
+ * POST JSON to an SSE endpoint and consume the stream. EventSource can't issue a
+ * POST with a body, so we read the response stream by hand and split it on the
+ * SSE `\n\n` frame boundary. Shared by both streaming endpoints.
  */
-export async function streamJournalEntry(
-  content: string,
+async function consumeSSE(
+  path: string,
+  body: unknown,
   onEvent: (event: StreamEvent) => void,
+  fallbackError: string,
 ): Promise<void> {
-  const res = await fetch('/api/journal', {
+  const res = await fetch(path, {
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ content }),
+    body: JSON.stringify(body),
   });
 
   if (!res.ok || !res.body) {
-    const body = await res.json().catch(() => ({}));
-    throw new ApiError(res.status, body.error ?? 'Could not submit your entry.');
+    const errBody = await res.json().catch(() => ({}));
+    throw new ApiError(res.status, errBody.error ?? fallbackError);
   }
 
   const reader = res.body.getReader();
@@ -100,4 +106,32 @@ export async function streamJournalEntry(
       }
     }
   }
+}
+
+/** Submit a journal entry and stream the analysis + companion reply. */
+export function streamJournalEntry(
+  content: string,
+  onEvent: (event: StreamEvent) => void,
+): Promise<void> {
+  return consumeSSE('/api/journal', { content }, onEvent, 'Could not submit your entry.');
+}
+
+/**
+ * Ask a tapped follow-up ("explore") and stream the answer. This does NOT create
+ * a journal entry — nothing is mood-scored or stored.
+ */
+export function streamExplore(
+  question: string,
+  context: string | undefined,
+  onEvent: (event: StreamEvent) => void,
+): Promise<void> {
+  return consumeSSE('/api/journal/explore', { question, context }, onEvent, 'Could not explore that.');
+}
+
+/** Send a message to the companion chatbot and stream its reply. */
+export function streamChat(
+  message: string,
+  onEvent: (event: StreamEvent) => void,
+): Promise<void> {
+  return consumeSSE('/api/chat', { message }, onEvent, 'Could not reach your companion.');
 }

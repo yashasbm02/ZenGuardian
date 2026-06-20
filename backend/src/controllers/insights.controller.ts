@@ -1,7 +1,7 @@
 import type { Response, NextFunction } from 'express';
 import { Types } from 'mongoose';
 import { JournalModel } from '../models/journal.model';
-import { geminiService, type InsightReport } from '../services/gemini.service';
+import { llm, type InsightReport } from '../services/llm.service';
 import type { AuthenticatedRequest } from '../middleware/auth.middleware';
 
 const SIX_HOURS_MS = 6 * 60 * 60 * 1000;
@@ -53,7 +53,7 @@ export async function getInsights(
       return;
     }
 
-    const report = await geminiService.generateInsightReport(
+    const report = await llm.generateInsightReport(
       entries.map((e) => ({
         content: e.content,
         moodMetrics: {

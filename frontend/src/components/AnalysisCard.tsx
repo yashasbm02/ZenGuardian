@@ -18,7 +18,7 @@ export function AnalysisCard({ metrics }: { metrics: MoodMetrics }) {
   const pct = Math.round((metrics.stressScore / 10) * 100);
 
   return (
-    <div className="card analysis">
+    <div className="card analysis" role="region" aria-label="Mood Analysis Results" tabIndex={0}>
       <div className="analysis-head">
         <div>
           <span className="muted small">Primary emotion</span>

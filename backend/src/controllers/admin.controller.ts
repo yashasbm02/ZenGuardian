@@ -26,11 +26,11 @@ export async function healthReport(
         { $group: { _id: '$type', count: { $sum: 1 } } },
       ]),
       EventModel.aggregate<{ _id: string; count: number }>([
-        { $match: { createdAt: { $gte: since1h }, type: 'gemini.error' } },
+        { $match: { createdAt: { $gte: since1h }, type: 'llm.error' } },
         { $group: { _id: '$type', count: { $sum: 1 } } },
       ]),
       EventModel.aggregate<{ p95: number }>([
-        { $match: { createdAt: { $gte: since1h }, type: 'gemini.embed' } },
+        { $match: { createdAt: { $gte: since1h }, type: 'embed.done' } },
         { $sort: { 'meta.latencyMs': 1 } },
         {
           $group: {
@@ -57,13 +57,14 @@ export async function healthReport(
     res.json({
       generatedAt: new Date(),
       last24h: {
-        journalEntries: byType['gemini.embed'] ?? 0,
+        journalEntries: byType['embed.done'] ?? 0,
+        chatMessages: byType['chat.message'] ?? 0,
         crisisDetections: byType['crisis.detected'] ?? 0,
-        geminiErrors: byType['gemini.error'] ?? 0,
+        llmErrors: byType['llm.error'] ?? 0,
         vectorDegradations: byType['vector.degraded'] ?? 0,
       },
       lastHour: {
-        geminiErrors: hourCounts[0]?.count ?? 0,
+        llmErrors: hourCounts[0]?.count ?? 0,
         embeddingP95Ms: embedLatencies[0]?.p95 ?? null,
       },
     });

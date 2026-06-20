@@ -3,6 +3,7 @@ import { useAuth } from './context/AuthContext';
 import { AuthPage } from './pages/AuthPage';
 import { Dashboard } from './pages/Dashboard';
 import { Settings } from './pages/Settings';
+import { Chat } from './pages/Chat';
 
 export function App() {
   const { user, loading } = useAuth();
@@ -28,6 +29,10 @@ export function App() {
       <Route
         path="/settings"
         element={user ? <Settings /> : <Navigate to="/welcome" replace />}
+      />
+      <Route
+        path="/chat"
+        element={user ? <Chat /> : <Navigate to="/welcome" replace />}
       />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
